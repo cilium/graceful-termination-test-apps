@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/rand"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"time"
@@ -12,13 +13,12 @@ import (
 // Following constants should be synced with cilium CI.
 
 const MSG_SIZE = 256 // Needs to be synced with server
-const IO_TIME_OUT = 5 * time.Second
-const SERVER_CLOSE_MSG = "server shutdown"
+const RECEIVED_SERVER_MSG = "client received reply"
 
 func Run(servAddr *net.TCPAddr) {
 	var (
-		conn           *net.TCPConn
-		err            error
+		conn *net.TCPConn
+		err  error
 	)
 
 	for i := 0; i < 10; i++ {
@@ -30,6 +30,7 @@ func Run(servAddr *net.TCPAddr) {
 		time.Sleep(1 * time.Second)
 	}
 	panicOnErr("dial tcp failed", err)
+	fmt.Printf("connected to %v \n", conn.RemoteAddr())
 	defer conn.Close()
 
 	request := make([]byte, MSG_SIZE)
@@ -38,25 +39,26 @@ func Run(servAddr *net.TCPAddr) {
 	for {
 		reply := make([]byte, MSG_SIZE)
 
-		err = conn.SetWriteDeadline(time.Now().Add(IO_TIME_OUT))
-		panicOnErr("setWriteDeadline", err)
 		_, err = conn.Write(request)
+		if err != nil && err == io.EOF {
+			fmt.Printf("server closed the connection %v\n", err)
+			conn.Close()
+			os.Exit(0)
+		}
 		panicOnErr("write failed", err)
 
-		err = conn.SetReadDeadline(time.Now().Add(IO_TIME_OUT))
-		panicOnErr("setReadDeadline", err)
 		n, err := conn.Read(reply)
+		if err != nil && err == io.EOF {
+			fmt.Printf("server closed the connection %v\n", err)
+			conn.Close()
+			os.Exit(0)
+		}
 		panicOnErr("read failed", err)
 
-		fmt.Println("client received reply")
+		fmt.Println(RECEIVED_SERVER_MSG)
 
 		if bytes.Compare(request, reply[:n]) != 0 {
-			if string(reply[:n]) == SERVER_CLOSE_MSG {
-				fmt.Println(string(reply[:n]))
-				os.Exit(0)
-			} else {
-				panic(fmt.Sprintf("invalid server reply(%v) != request(%v)", reply, request))
-			}
+			panic(fmt.Sprintf("invalid server reply(%v) != request(%v)", reply, request))
 		}
 		time.Sleep(500 * time.Millisecond)
 	}
