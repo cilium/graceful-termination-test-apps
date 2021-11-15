@@ -77,7 +77,7 @@ func main() {
 	)
 	remote := os.Args[1]
 
-	for i := 0; i < 10; i++ {
+	for i := 0; i < 60; i++ {
 		if servAddr, err = net.ResolveTCPAddr("tcp", remote); err == nil {
 			break
 		}
