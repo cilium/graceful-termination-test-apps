@@ -11,14 +11,16 @@ import (
 	"time"
 )
 
-// Following constants should be synced with cilium CI.
+// Following constants should be synced with cilium CI/client.
 
 const MSG_SIZE = 256 // Needs to be synced with client
 const IO_TIME_OUT = 1 * time.Second
 const NUM_WORKERS = 5
-const GRACEFUL_TERMINATION_PERIOD = 15 * time.Second
+const GRACEFUL_TERMINATION_PERIOD = 10 * time.Second
 const RECEIVED_CLIENT_CONN = "received connection from"
 const TERMINATION_MSG = "terminating on SIGTERM"
+const SERVER_SHUTDOWN_MSG = "signal shutdown"
+const SERVER_FINAL_SHUTDOWN_MSG = "final shutdown"
 
 type tcpServer struct {
 	shutdown     chan struct{}
@@ -50,10 +52,19 @@ func (s *tcpServer) serve(listener *net.TCPListener) {
 	for {
 		select {
 		case <-s.shutdown:
-			conn.Close()
+			fmt.Printf("signaling shutdown to client %s \n", conn.RemoteAddr())
+			_ = conn.SetWriteDeadline(time.Now().Add(IO_TIME_OUT))
+			_, err = conn.Write([]byte(SERVER_SHUTDOWN_MSG))
+			panicOnErr("write failed", err)
+			time.Sleep(GRACEFUL_TERMINATION_PERIOD)
+			_ = conn.SetWriteDeadline(time.Now().Add(IO_TIME_OUT))
+			_, err = conn.Write([]byte(SERVER_FINAL_SHUTDOWN_MSG))
+			panicOnErr("write failed", err)
+			_ = conn.Close()
 			return
 		default:
-			_, _ = conn.Read(buf)
+			_ = conn.SetReadDeadline(time.Now().Add(IO_TIME_OUT))
+			_, err = conn.Read(buf)
 			_ = conn.SetWriteDeadline(time.Now().Add(IO_TIME_OUT))
 			_, err = conn.Write(buf)
 		}
@@ -90,7 +101,6 @@ func main() {
 			listener.Close()
 			// Wait until active connections are drained
 			server.activeConnWg.Wait()
-			time.Sleep(GRACEFUL_TERMINATION_PERIOD)
 			fmt.Println("exiting")
 			return
 		default:

@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"crypto/rand"
 	"fmt"
-	"io"
 	"net"
 	"os"
 	"time"
@@ -14,6 +13,9 @@ import (
 
 const MSG_SIZE = 256 // Needs to be synced with server
 const RECEIVED_SERVER_MSG = "client received reply"
+const SERVER_SHUTDOWN_MSG = "signal shutdown"
+const SERVER_FINAL_SHUTDOWN_MSG = "final shutdown"
+const EXIT_MSG = "exiting on graceful termination"
 
 func Run(servAddr *net.TCPAddr) {
 	var (
@@ -34,34 +36,33 @@ func Run(servAddr *net.TCPAddr) {
 	defer conn.Close()
 
 	request := make([]byte, MSG_SIZE)
+	reply := make([]byte, MSG_SIZE)
 	_, err = rand.Read(request)
 	panicOnErr("rand.Read", err)
 	for {
-		reply := make([]byte, MSG_SIZE)
-
 		_, err = conn.Write(request)
-		if err != nil && err == io.EOF {
-			fmt.Printf("server closed the connection %v\n", err)
-			conn.Close()
-			os.Exit(0)
-		}
 		panicOnErr("write failed", err)
 
 		n, err := conn.Read(reply)
-		if err != nil && err == io.EOF {
-			fmt.Printf("server closed the connection %v\n", err)
-			conn.Close()
-			os.Exit(0)
-		}
 		panicOnErr("read failed", err)
 
 		fmt.Println(RECEIVED_SERVER_MSG)
 
 		if bytes.Compare(request, reply[:n]) != 0 {
+			if string(reply[:n]) == SERVER_SHUTDOWN_MSG {
+				break
+			}
 			panic(fmt.Sprintf("invalid server reply(%v) != request(%v)", reply, request))
 		}
 		time.Sleep(500 * time.Millisecond)
 	}
+	// Block on read until server gracefully closes the connection.
+	_, err = conn.Read(reply)
+	fmt.Printf("received %s \n", SERVER_FINAL_SHUTDOWN_MSG)
+	panicOnErr("not gracefully terminated", err)
+	fmt.Println(EXIT_MSG)
+	conn.Close()
+	os.Exit(0)
 }
 
 func panicOnErr(ctx string, err error) {
